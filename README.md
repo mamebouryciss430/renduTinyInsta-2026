@@ -24,7 +24,7 @@
 ## 1. Montage
 * **Projet GCP :** `tinyinsta-2026-515115`
 * **Région :** `europe-west` (`europe-west1`)
-* **Versions déployées :** `default`, `fixed1`, `fixed2`, `fixed4` *(et `opti` pour la Partie 3)*
+* **Versions déployées :** `default`, `fixed1`, `fixed2`, `fixed4`, `opti1`
 * **Dates des mesures :** Novembre 2026
 * **Machine cliente :** Google Cloud Shell (session `tmux`)
 * **Génération des figures :** Orchestrée en une commande via `snakemake --cores 1` (`Snakefile` + `bench/analyze.py`)
@@ -90,6 +90,20 @@ for n in 1 2 4; do
 done
 ```
 
+#### Mesures Partie 3 (`opti1`, 1 instance fixe, facteur $F \in \{5, 10, \dots, 100\}$, 30s par run)
+```bash
+gcloud app deploy app-opti-1.yaml --version=opti1 --no-promote --quiet
+URL_OPTI=$(gcloud app versions describe opti1 --service default --format='value(versionUrl)')
+
+for f in $(seq 5 5 100); do
+  pref=$(printf 'f%02d' $f)
+  TINY_PREFIX=$pref TINY_USERS=120 TINY_LOG="raw/p3_opti_${pref}.csv" \
+    locust -f bench/locustfile.py --headless -u 1 -r 1 -t 30s --only-summary --host $URL_OPTI
+done
+
+gcloud app versions stop opti1 --quiet
+```
+
 ---
 
 ## 2. Résultats des parties 1 à 3
@@ -147,10 +161,22 @@ done
 ---
 
 ### Partie 3 : Corriger et re-mesurer
-* **Goulot identifié et correction :** *(À compléter après exécution de la Partie 3 — ex. : découpage de la liste `follows` en paquets de 30 auteurs (`chunks` de 30) pour continuer à utiliser l'opérateur `IN` de Datastore lorsque $F \ge 30$, ou mise en cache mémoire/Memcache des timelines).*
+* **Goulot identifié et correction :**
+  Dans la Partie 1 (Fig. 1b), le goulot majeur identifié est le **basculement séquentiel $O(F)$ dès $F \ge 30$** dans `get_timeline()` (`main.py`). L'opérateur `IN` de Google Cloud Datastore étant limité à **30 valeurs**, dès que `len(follows) > 30` (soit $F \ge 30$ avec l'utilisateur lui-même), la requête lève une exception et déclenche une boucle de $F+1$ requêtes individuelles (`for author in follows: ... fetch(limit=20)`).
+  * **Correction apportée (`opti1`) :** Découpage de la liste `follows` en **paquets (*chunks*) de 30 auteurs maximum** (`chunks = [follows[i:i + 30] for i in range(0, len(follows), 30)]`), exécution d'une requête `IN` (`limit=20`) par paquet, puis tri en mémoire par date décroissante (`sorted(..., reverse=True)[:limit]`). Le nombre de requêtes Datastore passe ainsi de $F+1$ à $\lceil (F+1)/30 \rceil$ (au plus **4 requêtes au lieu de 101** pour $F = 100$).
+
 * **Figure :**
   ![Figure 3 — Comparaison Avant / Après optimisation](figures/fig3.png)
-* **Interprétation et coût de la correction :** *(À compléter après mesure de la version `opti` : gain de latence/débit et coût en complexité, mémoire ou cohérence des données).*
+
+* **Interprétation et coût de la correction :**
+  * **Gain obtenu :** La rupture brutale à $F = 30$ disparaît complètement et laisse place à une évolution par légers paliers tous les 30 abonnements ($F \in [5,25] \rightarrow$ 1 chunk $\approx 39\text{ ms}$ ; $F \in [30,55] \rightarrow$ 2 chunks $\approx 70\text{ ms}$ ; $F \in [60,85] \rightarrow$ 3 chunks $\approx 98\text{ ms}$ ; $F \in [90,100] \rightarrow$ 4 chunks $\approx 124\text{ ms}$) :
+    * À **$F = 30$**, le temps serveur médian chute de **659,65 ms à 68,35 ms** (accélération **$\times 9,65$**, débit passant de **1,47 à 10,69 req/s**).
+    * À **$F = 100$**, le temps serveur médian passe de **1 851,50 ms à 128,60 ms** (accélération **$\times 14,40$**, latence client divisée par **12,54** : de 1 863,3 ms à 148,6 ms, et débit multiplié par **12,3** : de 0,52 à 6,39 req/s).
+    * Pour $F \le 25$, le comportement reste quasi identique (1 seul chunk `IN`, légère variation de ~8 ms liée à la variabilité réseau/instance).
+  * **Coût de la correction :**
+    * **Complexité :** Très faible — 4 lignes de code ajoutées dans `get_timeline()`, un tri en mémoire sur au plus $20 \times \lceil (F+1)/30 \rceil$ entités (soit $\le 80$ objets pour $F = 100$), et aucune dépendance externe (pas de Redis/Memcache à maintenir).
+    * **Argent (coût GCP) :** **Gain financier massif** — au lieu de lire $1 + 20 \times (F+1)$ entités pour $F \ge 30$, la version optimisée ne lit plus que $1 + 20 \times \lceil (F+1)/30 \rceil$ entités. Pour $F = 100$, les lectures Datastore chutent de **2 021 à 81 entités** par timeline (**division par 25 du coût Datastore**, soit **29,16 $** au lieu de **727,56 $** pour 1 million de timelines), tout en conservant une seule instance `B1`/`F1`.
+    * **Cohérence des données :** **Cohérence forte conservée (100 % exacte)** — contrairement à un cache applicatif qui introduirait des données périmées, les requêtes interrogent directement Datastore à chaque appel et garantissent exactement les mêmes 20 posts les plus récents.
 
 ---
 
@@ -160,7 +186,7 @@ done
 | :--- | :--- | :--- | :--- | :--- |
 | **Utilisateurs ($U$)** | **Oui** | Au moins $U = 10\,000$ (testé sur $\times 100$) | Accès direct par clé sur `User` ($O(1)$) et requête sur index composite `Post(author, created DESC)` sans scan global de la table `User`. | Fig. 1a |
 | **Posts par utilisateur ($P$)** | **Oui** | Au moins $P = 1\,000$ (testé sur $\times 100$) | L'index composite pré-trie les posts par date décroissante et `limit=20` stoppe la lecture après 20 entités, quel que soit $P$. | Fig. 1a |
-| **Followees ($F$)** | **Non (rupture à seuil)** | Jusqu'à **$F = 29$** ($\le 30$ auteurs avec soi-même) | Au-delà de 30 éléments, la clause `IN` de Datastore lève une exception et le code bascule sur une boucle séquentielle de $F+1$ requêtes individuelles ($O(F)$). | Fig. 1b |
+| **Followees ($F$)** | **Non (version initiale)** / **Oui (après `opti1`, $O(F/30)$)** | Jusqu'à **$F = 29$** avant opti ; **> 100** (< 130 ms) après opti | Avant : exception `IN > 30` $\rightarrow$ boucle séquentielle de $F+1$ requêtes ($O(F)$). Après : découpage en chunks de 30 auteurs ($\lceil (F+1)/30 \rceil$ requêtes `IN`). | Fig. 1b / Fig. 3 |
 | **Instances ($N$)** | **Oui** | Au moins $N = 4$ instances (~87 req/s) | API *stateless* en lecture seule : le load balancer App Engine répartit équitablement le trafic, multipliant le débit maximal par $\approx N$. | Fig. 2a / 2b |
 
 ---
@@ -168,17 +194,17 @@ done
 ## 4. Validité
 
 1. **Instances actives :**
-   La colonne `unique_instances` (calculée via l'en-tête `X-Instance`) confirme que **100 % des mesures de la Partie 1** ont été servies par **1 seule instance**, et que les séries de la Partie 2 ont bien mobilisé exactement **1, 2 et 4 instances distinctes** selon la version déployée (`fixed1`, `fixed2`, `fixed4`), sans interférence de l'autoscaling.
+   La colonne `unique_instances` (calculée via l'en-tête `X-Instance`) confirme que **100 % des mesures des Parties 1 et 3** ont été servies par **1 seule instance**, et que les séries de la Partie 2 ont bien mobilisé exactement **1, 2 et 4 instances distinctes** selon la version déployée (`fixed1`, `fixed2`, `fixed4`), sans interférence de l'autoscaling.
 2. **Indépendance des runs :**
-   Les runs sont indépendants : `/api/timeline` n'effectue aucune écriture en base (les jeux de données `base`, `u*`, `p*`, `f*` sont strictement en lecture seule pendant les benchmarks), chaque jeu est isolé par son préfixe de clés, et chaque version `fixedN` est démarrée puis arrêtée à la fin de sa série. Seule la toute première requête après déploiement subit un léger *cold start*, absorbé sur la durée du run (30s à 45s).
+   Les runs sont indépendants : `/api/timeline` n'effectue aucune écriture en base (les jeux de données `base`, `u*`, `p*`, `f*` sont strictement en lecture seule pendant les benchmarks), chaque jeu est isolé par son préfixe de clés, et chaque version (`fixedN`, `opti1`) est démarrée puis arrêtée à la fin de sa série. Seule la toute première requête après déploiement subit un léger *cold start*, absorbé sur la durée du run (30s à 45s).
 3. **Part réseau de la latence :**
-   En comparant `LATENCY_MS` (côté Locust dans Cloud Shell) et `SERVER_MS` (`Server-Timing` côté App Engine), le temps réseau aller-retour est quasi constant autour de **13 à 21 ms**. Il représente **~31 à 35 %** de la latence lorsque le traitement serveur est rapide (~30 ms pour $U$, $P$ et $F \le 25$), et tombe à **< 2 %** dès que $F \ge 30$ (où `SERVER_MS` atteint 660 à 1 852 ms).
+   En comparant `LATENCY_MS` (côté Locust dans Cloud Shell) et `SERVER_MS` (`Server-Timing` côté App Engine), le temps réseau aller-retour est quasi constant autour de **13 à 25 ms**. Il représente **~31 à 35 %** de la latence lorsque le traitement serveur est rapide (~30 ms pour $U$, $P$ et $F \le 25$), et tombe à **< 2 %** dès que $F \ge 30$ avant optimisation (où `SERVER_MS` atteint 660 à 1 852 ms).
 4. **Échecs et codes HTTP observés :**
    Un échec est défini par tout statut différent de `HTTP 200` (codes `5xx` ou `0` pour timeout réseau).
-   * **Partie 1 :** **0 % d'erreur** sur les 7 015 requêtes (100 % de `HTTP 200`).
+   * **Parties 1 et 3 :** **0 % d'erreur** sur l'ensemble des requêtes (100 % de `HTTP 200`).
    * **Partie 2 :** **0 % d'erreur** à faible charge ($C \le 8$, hors 1 requête sur 2 414 à $N=4, C=4$). À forte congestion ($C \in \{16, 32, 64\}$), un très faible taux d'erreur apparaît (**0,78 % à 1,01 %** sur `fixed1`, **0,28 % à 0,39 %** sur `fixed2`, **0,18 % à 0,40 %** sur `fixed4`), correspondant à des rejets ponctuels de file d'attente App Engine sous saturation.
 5. **Chemin de code exercé :**
-   Le basculement brutal de la latence serveur entre $F = 25$ (30,8 ms) et $F = 30$ (659,65 ms) sur la Fig. 1b démontre expérimentalement que le chemin principal (`query.add_filter('author', 'IN', follows)`) est bien exercé pour $F \le 29$, et que le chemin de repli (`except` avec boucle séquentielle sur chaque auteur) est déclenché exactement à partir de $F = 30$. De même, `TINY_PREFIX` et `TINY_USERS` garantissent que chaque utilisateur Locust interroge un utilisateur distinct du préfixe ciblé.
+   Le basculement brutal de la latence serveur entre $F = 25$ (30,8 ms) et $F = 30$ (659,65 ms) sur la Fig. 1b démontre expérimentalement que le chemin principal (`query.add_filter('author', 'IN', follows)`) est bien exercé pour $F \le 29$, et que le chemin de repli (`except` avec boucle séquentielle sur chaque auteur) est déclenché exactement à partir de $F = 30$. Sur la Fig. 3, les paliers tous les 30 abonnements confirment l'exécution du découpage en paquets de 30 dans `opti1`. De même, `TINY_PREFIX` et `TINY_USERS` garantissent que chaque utilisateur Locust interroge un utilisateur distinct du préfixe ciblé.
 6. **Estimation du coût de la campagne :**
    Voir le détail chiffré dans la section 5 ci-dessous (coût total largement inférieur au plafond de 5 $ estimé par le sujet).
 
@@ -186,9 +212,10 @@ done
 
 ## 5. Coût de la campagne
 * **Écritures Datastore (peuplement des jeux) :** ~414 300 entités créées au total (`base` : 21 000, `u100` : 2 100, `u10000` : 210 000, `p10/100/1000` : 111 300, `f05..f100` : 50 400 + purges/re-seeds éventuels) $\rightarrow$ **< 0,50 $** (tarif : 0,108 $ / 100 000 écritures).
-* **Lectures Datastore (Parties 1 et 2) :**
+* **Lectures Datastore (Parties 1, 2 et 3) :**
   * **Partie 1 :** 7 015 requêtes réussies, dont 6 613 avec $F \le 25$ ($\times 21$ entités = 138 873 lectures) et 402 avec $F \ge 30$ ($\approx 439\,352$ lectures) $\rightarrow$ **~578 225 lectures**.
   * **Partie 2 :** 37 254 requêtes réussies sur `base` ($F=20$, $\times 21$ entités) $\rightarrow$ **~782 334 lectures**.
-  * **Total lectures (Parties 1 + 2) :** **~1,36 million de lectures** $\rightarrow$ **~0,49 $** (tarif : 0,036 $ / 100 000 lectures).
-* **Heures d'instances App Engine (`fixed1`, `fixed2`, `fixed4`) :** Environ 30 minutes cumulées d'instances F1/B1 actives (arrêtées immédiatement après chaque bloc via `gcloud app versions stop`), couvertes par le quota gratuit quotidien App Engine (28 heures-instances/jour) $\rightarrow$ **0,00 $** (ou **< 0,10 $** hors quota).
-* **Coût total facturé (Parties 1 et 2) :** **~1,00 $** *(à compléter avec le relevé exact de la console GCP Facturation après la Partie 3)*.
+  * **Partie 3 (`opti1`) :** 6 094 requêtes réussies avec découpage en chunks de 30 $\rightarrow$ **~273 000 lectures**.
+  * **Total lectures (Parties 1 + 2 + 3) :** **~1,63 million de lectures** $\rightarrow$ **~0,59 $** (tarif : 0,036 $ / 100 000 lectures).
+* **Heures d'instances App Engine (`fixed1`, `fixed2`, `fixed4`, `opti1`) :** Environ 45 minutes cumulées d'instances F1/B1 actives (arrêtées immédiatement après chaque bloc via `gcloud app versions stop`), couvertes par le quota gratuit quotidien App Engine (28 heures-instances/jour) $\rightarrow$ **0,00 $** (ou **< 0,15 $** hors quota).
+* **Coût total facturé (campagne complète) :** **~1,10 $** (largement sous le budget de 5 $ prévu et sous l'alerte de 20 $).
