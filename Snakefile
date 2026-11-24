@@ -1,10 +1,10 @@
 import glob
 
-# Détection automatique des fichiers bruts déjà présents dans raw/
-RAW_P1_UP = glob.glob("raw/*_u*.csv") + glob.glob("raw/*_p[0-9]*.csv")
-RAW_P1_F  = glob.glob("raw/*_f*.csv")
-RAW_P2    = glob.glob("raw/*_[nN]*_[cC]*.csv")
-RAW_P3    = glob.glob("raw/*opti*_[cC]*.csv")
+# Détection automatique des fichiers bruts dans raw/
+RAW_P1_UP = glob.glob("raw/p1_u*.csv") + glob.glob("raw/p1_p[0-9]*.csv")
+RAW_P1_F  = glob.glob("raw/p1_f*.csv")
+RAW_P2    = glob.glob("raw/p2_n*_c*.csv")
+RAW_P3    = glob.glob("raw/p3_opti_f*.csv")
 
 # Cibles finales : fig1a, fig1b, fig2a, fig2b (et fig3 si les CSV de la partie 3 existent)
 TARGETS = [
@@ -62,7 +62,7 @@ rule fig2b:
 
 rule fig3:
     input:
-        RAW_P2,
+        RAW_P1_F,
         RAW_P3,
         script="bench/analyze.py"
     output:
