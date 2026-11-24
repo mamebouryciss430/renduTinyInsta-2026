@@ -46,22 +46,29 @@ def get_timeline(user: str, limit: int = 20):
         follows = user_entity.get('follows', [])
     follows = list({*follows, user})
 
-    timeline = []
+    #Découpage en paquets de 30 auteurs maximum et éviter le repli séquentiel O(F).
+    chunks = [follows[i:i + 30] for i in range(0, len(follows), 30)]
+
+    posts = []
     used_gql = False
     try:
         if hasattr(client, 'gql'):
-            gql = client.gql("SELECT * FROM Post WHERE author IN @authors ORDER BY created DESC")
-            gql.bindings["authors"] = follows
-            timeline = list(gql.fetch(limit=limit))
+            for chunk in chunks:
+                gql = client.gql("SELECT * FROM Post WHERE author IN @authors ORDER BY created DESC")
+                gql.bindings["authors"] = chunk
+                posts.extend(list(gql.fetch(limit=limit)))
             used_gql = True
     except Exception:
-        pass
+        posts = []
+        used_gql = False
+
     if not used_gql:
         try:
-            query = client.query(kind='Post')
-            query.add_filter('author', 'IN', follows)
-            query.order = ['-created']
-            timeline = list(query.fetch(limit=limit))
+            for chunk in chunks:
+                query = client.query(kind='Post')
+                query.add_filter('author', 'IN', chunk)
+                query.order = ['-created']
+                posts.extend(list(query.fetch(limit=limit)))
         except Exception:
             posts = []
             for author in follows:
@@ -69,7 +76,8 @@ def get_timeline(user: str, limit: int = 20):
                 q.add_filter('author', '=', author)
                 q.order = ['-created']
                 posts.extend(list(q.fetch(limit=limit)))
-            timeline = sorted(posts, key=lambda p: p.get('created'), reverse=True)[:limit]
+
+    timeline = sorted(posts, key=lambda p: p.get('created'), reverse=True)[:limit]
     return timeline
 
 
