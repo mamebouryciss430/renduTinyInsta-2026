@@ -1,12 +1,12 @@
 import glob
 
-# Détection automatique des fichiers bruts dans raw/
+#Détection automatique des fichiers bruts dans raw/
 RAW_P1_UP = glob.glob("raw/p1_u*.csv") + glob.glob("raw/p1_p[0-9]*.csv")
 RAW_P1_F  = glob.glob("raw/p1_f*.csv")
 RAW_P2    = glob.glob("raw/p2_n*_c*.csv")
 RAW_P3    = glob.glob("raw/p3_opti_f*.csv")
 
-# Cibles finales : fig1a, fig1b, fig2a, fig2b (et fig3 si les CSV de la partie 3 existent)
+#Cibles finales : fig1a, fig1b, fig2a, fig2b, fig3 les CSV 
 TARGETS = [
     "figures/fig1a.csv", "figures/fig1a.png",
     "figures/fig1b.csv", "figures/fig1b.png",

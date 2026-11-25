@@ -14,18 +14,18 @@ def compute_metrics(filepath):
     ok = df[df["STATUS"] == 200]
     n_ok = len(ok)
 
-    # Durée réelle du run (en secondes)
+    #Durée réelle du run (en secondes)
     duration_s = df["T_START"].max() - df["T_START"].min() if total > 1 else 0.0
     throughput_req_s = n_ok / duration_s if duration_s > 0 else 0.0
 
-    # Taux d'erreur HTTP en %
+    #Taux d'erreur HTTP en %
     error_rate_pct = ((total - n_ok) / total * 100.0) if total > 0 else 0.0
 
-    # Médianes sur les requêtes réussies
+    #Médianes sur les requêtes réussies
     latency_med_ms = ok["LATENCY_MS"].median() if n_ok > 0 else float("nan")
     server_med_ms = ok["SERVER_MS"].median() if n_ok > 0 else float("nan")
 
-    # Nombre d'instances uniques actives en ignorant les valeurs vides
+    #Nombre d'instances uniques actives en ignorant les valeurs vides
     unique_instances = ok["INSTANCE"].dropna().nunique()
 
     return {
@@ -41,7 +41,7 @@ def compute_metrics(filepath):
 
 
 def build_fig1a():
-    # Impact de U (100, 1000, 10000) et P (10, 100, 1000)
+    #Impact de U (100, 1000, 10000) et P (10, 100, 1000)
     rows = []
     for u in [100, 1000, 10000]:
         matches = glob.glob(f"raw/p1_u{u}.csv")
@@ -74,7 +74,7 @@ def build_fig1a():
 
 
 def build_fig1b():
-    # Impact de F (5 à 100 par pas de 5) — uniquement Partie 1 (Avant)
+    #Impact de F (5 à 100 par pas de 5) — uniquement Partie 1 (Avant)
     rows = []
     for f in range(5, 105, 5):
         matches = glob.glob(f"raw/p1_f{f:02d}.csv") or glob.glob(f"raw/p1_f{f}.csv")
@@ -110,7 +110,7 @@ def parse_part2():
 
 
 def build_fig2a():
-    # Débit en fonction de C pour N=1, 2, 4
+    #Débit en fonction de C pour N=1, 2, 4
     df_out = parse_part2()
     df_out.to_csv("figures/fig2a.csv", index=False)
 
@@ -129,7 +129,7 @@ def build_fig2a():
 
 
 def build_fig2b():
-    # Latence médiane en fonction de C pour N=1, 2, 4 (Loi de Little)
+    #Latence médiane en fonction de C pour N=1, 2, 4 (Loi de Little)
     df_out = parse_part2()
     df_out.to_csv("figures/fig2b.csv", index=False)
 
@@ -148,7 +148,7 @@ def build_fig2b():
 
 
 def build_fig3():
-    # Comparaison Avant (fixed1) vs Après optimisation (opti1) en fonction de F
+    #Comparaison Avant (fixed1) vs Après optimisation (opti1) en fonction de F
     rows = []
     for f in range(5, 105, 5):
         m_before = glob.glob(f"raw/p1_f{f:02d}.csv") or glob.glob(f"raw/p1_f{f}.csv")
