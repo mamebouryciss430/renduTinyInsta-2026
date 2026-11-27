@@ -112,9 +112,9 @@ gcloud app versions stop opti1 --quiet
 #### Question : de quoi dépend le temps de traitement d’une timeline ?
 * **Hypothèse :** 
   L'analyse de `get_timeline(user, limit=20)` dans `main.py` montre une exécution en deux phases : une lecture directe de l'entité `User` par clé (`client.get(follow_key)`) pour récupérer la liste des $F$ abonnements (soit $F+1$ auteurs avec l'utilisateur lui-même), suivie d'une requête Datastore sur `Post` filtrée par `author IN follows` et triée par `-created` (`limit=20`).
-  * **Facteur $U$ :** Temps serveur constant ($O(1)$), l'index composite `(author, created DESC)` évite tout balayage complet des utilisateurs.
-  * **Facteur $P$ :** Temps serveur constant ($O(1)$), la clause `limit=20` borne le nombre de posts récupérés quel que soit le stock par auteur.
-  * **Facteur $F$ :** Temps serveur constant jusqu'à $F = 29$ (soit $\le 30$ auteurs dans la clause `IN`), puis rupture nette et croissance linéaire ($O(F)$) à partir de $F = 30$ : l'opérateur `IN` de Datastore étant limité à 30 valeurs, le code bascule dans le bloc `except` qui exécute séquentiellement $F+1$ requêtes individuelles (`for author in follows: ... fetch(limit=20)`).
+  * **Facteur $U$ :** Temps serveur constant ( $O(1)$ ), l'index composite `(author, created DESC)` évite tout balayage complet des utilisateurs.
+  * **Facteur $P$ :** Temps serveur constant ( $O(1)$ ), la clause `limit=20` borne le nombre de posts récupérés quel que soit le stock par auteur.
+  * **Facteur $F$ :** Temps serveur constant jusqu'à $F = 29$ (soit $\le 30$ auteurs dans la clause `IN`), puis rupture nette et croissance linéaire ( $O(F)$ ) à partir de $F = 30$ : l'opérateur `IN` de Datastore étant limité à 30 valeurs, le code bascule dans le bloc `except` qui exécute séquentiellement $F+1$ requêtes individuelles (`for author in follows: ... fetch(limit=20)`).
 
 * **Figures :**
   ![Figure 1a — Temps de réponse médian selon U et P](figures/fig1a.png)
@@ -184,9 +184,9 @@ gcloud app versions stop opti1 --quiet
 
 | Dimension | Passe à l'échelle ? | Jusqu'où ? | Pourquoi (mécanisme) | Preuve |
 | :--- | :--- | :--- | :--- | :--- |
-| **Utilisateurs ($U$)** | **Oui** | Au moins $U = 10\,000$ (testé sur $\times 100$) | Accès direct par clé sur `User` ($O(1)$) et requête sur index composite `Post(author, created DESC)` sans scan global de la table `User`. | Fig. 1a |
+| **Utilisateurs ($U$)** | **Oui** | Au moins $U = 10\,000$ (testé sur $\times 100$) | Accès direct par clé sur `User` ( $O(1)$ ) et requête sur index composite `Post(author, created DESC)` sans scan global de la table `User`. | Fig. 1a |
 | **Posts par utilisateur ($P$)** | **Oui** | Au moins $P = 1\,000$ (testé sur $\times 100$) | L'index composite pré-trie les posts par date décroissante et `limit=20` stoppe la lecture après 20 entités, quel que soit $P$. | Fig. 1a |
-| **Followees ($F$)** | **Non (version initiale)** / **Oui (après `opti1`, $O(F/30)$)** | Jusqu'à **$F = 29$** avant opti ; **> 100** (< 130 ms) après opti | Avant : exception `IN > 30` $\rightarrow$ boucle séquentielle de $F+1$ requêtes ($O(F)$). Après : découpage en chunks de 30 auteurs ($\lceil (F+1)/30 \rceil$ requêtes `IN`). | Fig. 1b / Fig. 3 |
+| **Followees ($F$)** | **Non (version initiale)** / **Oui (après `opti1`, $O(F/30)$)** | Jusqu'à **$F = 29$** avant opti ; **> 100** (< 130 ms) après opti | Avant : exception `IN > 30` $\rightarrow$ boucle séquentielle de $F+1$ requêtes ( $O(F)$ ). Après : découpage en chunks de 30 auteurs ($\lceil (F+1)/30 \rceil$ requêtes `IN`). | Fig. 1b / Fig. 3 |
 | **Instances ($N$)** | **Oui** | Au moins $N = 4$ instances (~87 req/s) |  Le trafic est réparti équitablement , multipliant le débit maximal par $\approx N$. | Fig. 2a / 2b |
 
 ---
